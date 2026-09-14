@@ -8,6 +8,8 @@ set pagination off
 echo \n===== ADDRESSES (Q8) =====\n
 break main
 run
+layout split
+layout regs
 print &greeting
 print &farewell
 print &val1

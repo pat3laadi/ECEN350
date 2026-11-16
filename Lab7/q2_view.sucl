@@ -1,0 +1,34 @@
+divider_add Question_2_processor
+variable_add SingleCycleProcTest_v.CLK
+variable_add SingleCycleProcTest_v.Reset
+variable_add SingleCycleProcTest_v.currentPC
+variable_add SingleCycleProcTest_v.uut.instruction
+variable_add SingleCycleProcTest_v.uut.opcode
+variable_add SingleCycleProcTest_v.uut.Reg2Loc
+variable_add SingleCycleProcTest_v.uut.ALUSrc
+variable_add SingleCycleProcTest_v.uut.MemtoReg
+variable_add SingleCycleProcTest_v.uut.RegWrite
+variable_add SingleCycleProcTest_v.uut.MemRead
+variable_add SingleCycleProcTest_v.uut.MemWrite
+variable_add SingleCycleProcTest_v.uut.Branch
+variable_add SingleCycleProcTest_v.uut.Uncondbranch
+variable_add SingleCycleProcTest_v.uut.ALUOp
+variable_add SingleCycleProcTest_v.uut.SignOp
+variable_add SingleCycleProcTest_v.uut.rd
+variable_add SingleCycleProcTest_v.uut.regoutA
+variable_add SingleCycleProcTest_v.uut.regoutB
+variable_add SingleCycleProcTest_v.uut.extimm
+variable_add SingleCycleProcTest_v.uut.aluout
+variable_add SingleCycleProcTest_v.uut.zero
+variable_add SingleCycleProcTest_v.uut.memout
+variable_add SingleCycleProcTest_v.MemtoRegOut
+variable_add SingleCycleProcTest_v.uut.nextpc
+zoom_fit
+marker_set P1_start 183000
+marker_set loop_starts 1023000
+marker_set CBZ_taken 8340000
+marker_set P1_result_F 8463000
+marker_set P2_MOVZ_start 8583000
+marker_set STUR_0x28 9423000
+marker_set P2_result 9543000
+cursor_set 8463000

@@ -635,3 +635,29 @@ time, and reran the testbench. A good testbench must FAIL every time:
 Every injected bug was caught, and the don't-care loops are what caught the
 pattern bugs: a test with only one encoding per instruction would have missed
 them.
+
+### 10.9 LLM use and corrections (prelab note)
+
+I used an LLM to help write this testbench, then checked it myself. I reviewed
+the details that commonly go wrong:
+
+- The `supported()` masks must match the control unit's patterns exactly.
+  Otherwise a real instruction could be chosen as an "invalid" opcode.
+- The checks use `!==` instead of `!=`, so X or Z outputs count as failures.
+- `$random` is truncated to 11 bits, as intended.
+- The 5 ns wait lets the outputs settle before each check.
+
+I found no errors in the testbench itself. The bugs I did correct were in the
+starter files (each has a "Fixed:" comment in the code):
+
+- The AND opcode in `SingleCycleControl.v` was a copy of ADD's
+  (`10001011000`). Corrected to `10001010000`.
+- `ALUOp` in `SingleCycleProc.v` was declared as `ALUop`, which made the
+  4-bit control signal a 1-bit wire. Corrected the name.
+- The control unit's module name and instance name were swapped in
+  `SingleCycleProc.v` (`control SingleCycleControl(...)`). Corrected to
+  `SC_Control control(...)`.
+
+To make sure the testbench really catches bugs, I added 6 bugs to the control
+unit one at a time (Section 10.8). The testbench failed on every one, and the
+don't-care loops were what caught the pattern bugs.

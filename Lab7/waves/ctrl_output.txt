@@ -1,0 +1,3 @@
+VCD info: dumpfile SC_Control_tb.vcd opened for output.
+PASS: SC_Control, 64 tests, 0 errors
+SC_Control_tb.v:84: $finish called at 320000 (1ps)

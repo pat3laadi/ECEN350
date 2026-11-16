@@ -1,0 +1,16 @@
+variable_add SC_Control_tb.opcode
+variable_add SC_Control_tb.Reg2Loc
+variable_add SC_Control_tb.ALUSrc
+variable_add SC_Control_tb.MemtoReg
+variable_add SC_Control_tb.RegWrite
+variable_add SC_Control_tb.MemRead
+variable_add SC_Control_tb.MemWrite
+variable_add SC_Control_tb.Branch
+variable_add SC_Control_tb.Uncondbranch
+variable_add SC_Control_tb.ALUOp
+variable_add SC_Control_tb.SignOp
+variable_add SC_Control_tb.got
+variable_add SC_Control_tb.exp
+variable_add SC_Control_tb.errors
+variable_add SC_Control_tb.tests
+zoom_fit

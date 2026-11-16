@@ -1,0 +1,24 @@
+variable_add SingleCycleProcTest_v.CLK
+variable_add SingleCycleProcTest_v.Reset
+variable_add SingleCycleProcTest_v.currentPC
+variable_add SingleCycleProcTest_v.uut.instruction
+variable_add SingleCycleProcTest_v.uut.opcode
+variable_add SingleCycleProcTest_v.uut.Reg2Loc
+variable_add SingleCycleProcTest_v.uut.ALUSrc
+variable_add SingleCycleProcTest_v.uut.MemtoReg
+variable_add SingleCycleProcTest_v.uut.RegWrite
+variable_add SingleCycleProcTest_v.uut.MemRead
+variable_add SingleCycleProcTest_v.uut.MemWrite
+variable_add SingleCycleProcTest_v.uut.Branch
+variable_add SingleCycleProcTest_v.uut.Uncondbranch
+variable_add SingleCycleProcTest_v.uut.ALUOp
+variable_add SingleCycleProcTest_v.uut.SignOp
+variable_add SingleCycleProcTest_v.uut.rd
+variable_add SingleCycleProcTest_v.uut.regoutA
+variable_add SingleCycleProcTest_v.uut.regoutB
+variable_add SingleCycleProcTest_v.uut.extimm
+variable_add SingleCycleProcTest_v.uut.aluout
+variable_add SingleCycleProcTest_v.uut.zero
+variable_add SingleCycleProcTest_v.uut.memout
+variable_add SingleCycleProcTest_v.MemtoRegOut
+zoom_fit

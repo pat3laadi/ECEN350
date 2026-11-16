@@ -743,3 +743,47 @@ check(11'b11111000010,      --op--> opcode = op  -----------------> opcode input
 | `MemtoRegOut` | the processor's `MemtoRegOut` output (the value being written back this cycle) | `passTest`: compared with `0xF` (Program 1) and `0x123456789abcdef0` (Program 2) |
 | `passed` | starts at 0; `+1` inside `passTest` on a match | `allPassed(passed, 2)` → "All tests passed" |
 | `watchdog` | `+1` every clock cycle | stops the simulation at 255 cycles (infinite-loop guard) |
+
+### 10.10 Where each requirement shows up in the waveform
+
+Times from `waves/SC_Control_tb.vcd`. Each test lasts **5 ns**, and `opcode`
+changes at the start of each one. (The waveform drops leading zeros, so B's
+`00010100000` shows as `10100000`. Format `opcode` as binary to see all 11 bits.)
+
+**Requirement 2: every supported opcode with all values of its don't-care bits (0–270 ns)**
+
+| Time (ns) | Instruction | `opcode` values | What to point at |
+|---|---|---|---|
+| 0–30 | LDUR, STUR, ADD, SUB, AND, ORR | one each (no don't-care bits) | each instruction changes a different set of control bits |
+| **30–50** | **ADDI / SUBI** (interleaved) | 30: `10010001000` (ADDI), 35: `11010001000` (SUBI), 40: `10010001001` (ADDI), 45: `11010001001` (SUBI) | the last bit flips 0 → 1, and ADDI's outputs at 40 ns equal its outputs at 30 ns |
+| **50–90** | **CBZ ×8** | `10110100000` → `10110100111` | the low 3 bits count 000…111; every control bit stays the same (Reg2Loc = 1, Branch = 1, ALUOp = 0111, SignOp = 010) |
+| **90–250** | **B ×32** | `00010100000` → `00010111111` | the low 5 bits count 00000…11111; only Uncondbranch = 1 and SignOp = 011 the whole time |
+| **250–270** | **MOVZ ×4** | `11010010100` → `11010010111` | the low 2 bits (`hw`) count 00…11; ALUSrc = 1, RegWrite = 1, ALUOp = 0111, SignOp = 100 the whole time |
+
+**Requirement 3: 10 random unsupported opcodes, default behavior (270–320 ns)**
+
+| Time (ns) | `opcode` |
+|---|---|
+| 270 | `10100100100` |
+| 275 | `11010000001` |
+| 280 | `11000001001` |
+| 285 | `11001100011` |
+| 290 | `01100001101` |
+| 295 | `00110001101` |
+| 300 | `10001100101` |
+| 305 | `01000010010` |
+| 310 | `01100000001` |
+| 315 | `10100001101` |
+
+What to point at: **every control bit is 0**, and `got` = `exp` =
+`000000000000000` for all 10. None of these match a real instruction, so the
+control unit falls to `default` and keeps the all-zero values.
+
+**Through the whole run (0–320 ns):** `got` always equals `exp`, `errors`
+stays 0, and `tests` counts up to 64. The run ends at 320 ns
+(64 tests × 5 ns), where the output prints `$finish called at 320000 (1ps)`.
+
+**In Surfer:** run `./run_waves.sh ctrl`. To show requirement 2, zoom to
+30–270 ns (e.g. 50–90 ns for CBZ: the bottom bits of `opcode` change while
+the control lines stay flat). To show requirement 3, zoom to 270–320 ns:
+`opcode` jumps around while every control line is low.

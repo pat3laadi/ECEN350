@@ -216,3 +216,86 @@ Two encodings from Program 1, the same way:
 | `#2` read, `#3` write | `RegisterFile.v` | small delays so values settle in the waveform |
 | write on the **falling** clock edge | `RegisterFile.v` | the PC updates on the rising edge; writing on the falling edge, in the middle of the cycle, lets the next instruction read the new value |
 | `#3` write delay | `DataMemory.v` (course-provided) | same idea for memory |
+
+## 8. The datapath diagram, mapped to the code
+
+This maps the textbook's single-cycle LEGv8 datapath-with-control diagram
+(PC, instruction memory, registers, ALU, data memory, the three muxes and the
+blue control lines) onto `SingleCycleProc.v`. Line numbers are from that file.
+
+### Black boxes (the datapath)
+
+| In the diagram | In the code | Lines |
+|---|---|---|
+| **PC** (the register on the far left) | `reg [63:0] currentpc`, updated on every rising clock edge: `currentpc <= reset ? startpc : nextpc` | 4, 49–55 |
+| **Instruction memory** (Read address in, Instruction [31–0] out) | `InstructionMemory imem(.Address(currentpc), .Data(instruction))` | 63–66 |
+| **Instruction [31–21]** going into Control | `assign opcode = instruction[31:21]` | 61 |
+| **Instruction [9–5]** to Read register 1 | `assign rm = instruction[9:5]` (this is **Rn**: the starter code named it `rm`) | 59 |
+| **Instruction [4–0]** to Write register | `assign rd = instruction[4:0]` | 58 |
+| **The mux in front of Read register 2** (Instruction [20–16] on 0, [4–0] on 1) | `assign rn = Reg2Loc ? instruction[4:0] : instruction[20:16]` | 60 |
+| **Registers** (2 read ports, 1 write port) | `RegisterFile regfile(...)`: RA = Read register 1, RB = Read register 2, RW = Write register, BusW = Write data, BusA/BusB = Read data 1/2 | 82–91 |
+| **Sign-extend** (26 bits in, 64 bits out) | `SignExtender signext(.Instruction(instruction[25:0]), .SignOp(SignOp), .SignExOut(extimm))` | 93–97 |
+| **The mux in front of ALU input B** (Read data 2 on 0, the immediate on 1) | `assign aluinB = ALUSrc ? extimm : regoutB` | 99 |
+| **ALU** (A, B, ALU result, Zero) | `ALU alu(.BusA(regoutA), .BusB(aluinB), .ALUCtrl(ALUOp), .BusW(aluout), .Zero(zero))` | 101–107 |
+| **Data memory** (Address = ALU result, Write data = Read data 2) | `DataMemory dmem(.Address(aluout), .WriteData(regoutB), .ReadData(memout), ...)` | 109–116 |
+| **The mux after data memory** (ALU result on 0, Read data on 1), feeding Write data | `assign MemtoRegOut = MemtoReg ? memout : aluout`; `MemtoRegOut` goes back to the register file's `BusW` | 118, 85 |
+| **The top section**: the "Add 4" adder, the branch "Add", the AND gate, the OR gate and the PC mux | all of it is one module, `NextPClogic nextpclogic(...)` (built in Lab 6) | 120–127 |
+
+How the top section works (from `../Lab6/NextPClogic.v`):
+
+```verilog
+if (Uncondbranch || (Branch && ALUZero))   // the OR gate, and the AND gate (Branch AND Zero)
+    NextPC = CurrentPC + SignExtImm64;     // the branch "Add" (PC + offset): mux input 1
+else
+    NextPC = CurrentPC + 4;                // the "Add 4" adder: mux input 0
+```
+
+The textbook's datapath also has a "Shift left 2" box before the branch adder.
+In this design the **sign extender does the shift** (it appends `2'b00` for the
+CB and B formats), so there's no separate box.
+
+### Blue lines (the control signals)
+
+All of them come out of `SC_Control control(...)` (lines 68–80), which gets
+`opcode` = Instruction [31–21]. Each blue line ends at a mux or an enable:
+
+| Blue line | Goes to, in the diagram | In the code |
+|---|---|---|
+| **Reg2Loc** | the mux in front of Read register 2 | line 60 (`rn = Reg2Loc ? ...`) |
+| **Uncondbranch** | the OR gate | `NextPClogic .Uncondbranch` (126) |
+| **Branch** | the AND gate (with ALU Zero) | `NextPClogic .Branch` (124), `.ALUZero(zero)` (125) |
+| **MemRead** | data memory | `DataMemory .MemoryRead` (113) |
+| **MemtoReg** | the mux after data memory | line 118 |
+| **ALUOp** (4 bits) | the ALU | `ALU .ALUCtrl` (105) |
+| **MemWrite** | data memory | `DataMemory .MemoryWrite` (114) |
+| **ALUSrc** | the mux in front of ALU input B | line 99 |
+| **RegWrite** | the register file | `RegisterFile .RegWr` (89) |
+| **SignOp** | the sign extender | `SignExtender .SignOp` (96) |
+
+**One difference from the diagram:** the diagram draws SignOp as 2 bits. In my
+design it is **3 bits** (line 31), because MOVZ needed a 5th immediate format
+(Section 4).
+
+### Following one instruction through: `LDUR X9, [XZR, #0x0]` (`F84003E9`)
+
+1. **Fetch:** the PC sends `0x000` to instruction memory, which outputs `F84003E9`.
+2. **Decode:** `opcode = 11111000010` (LDUR) reaches Control, which sets
+   ALUSrc = 1, MemtoReg = 1, RegWrite = 1, MemRead = 1, ALUOp = `0010` (ADD),
+   SignOp = `001` (D-type).
+3. **Read registers:** Read register 1 = bits [9:5] = 31 (XZR), so Read data 1 = 0.
+4. **Immediate:** bits [20:12] = 0, so the sign extender outputs 0.
+5. **ALU:** ALUSrc = 1 picks the immediate, so the ALU computes 0 + 0 = address `0x0`.
+6. **Memory:** MemRead = 1, so data memory reads address 0, which holds `1`.
+7. **Write back:** MemtoReg = 1 picks the memory value, and RegWrite = 1
+   writes `1` into register bits [4:0] = X9.
+8. **Next PC:** Branch = 0 and Uncondbranch = 0, so the PC mux picks PC + 4 = `0x004`.
+
+**Other instructions use different paths:**
+
+- **STUR:** Reg2Loc = 1 sends Rt to Read register 2, so its value reaches
+  data memory's Write data. RegWrite = 0.
+- **CBZ:** Reg2Loc = 1 and ALUOp = PassB, so the ALU outputs Rt. Zero = 1
+  plus Branch = 1 makes the AND gate fire, and the PC mux picks PC + offset.
+- **MOVZ:** SignOp = `100` builds the shifted immediate, ALUSrc = 1 sends it to
+  the ALU, PassB passes it through, MemtoReg = 0, and RegWrite = 1 writes it
+  into Rd.

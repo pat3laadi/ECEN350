@@ -661,3 +661,85 @@ starter files (each has a "Fixed:" comment in the code):
 To make sure the testbench really catches bugs, I added 6 bugs to the control
 unit one at a time (Section 10.8). The testbench failed on every one, and the
 don't-care loops were what caught the pattern bugs.
+
+## 11. Where every signal comes from and where it goes
+
+For each signal: **where it is made** (what drives it) and **where it goes**
+(what reads it). Line numbers are from the named file.
+
+### 11.1 Control testbench (`SC_Control_tb.v`)
+
+One test, start to finish:
+
+```
+initial block                       check task                     control unit (dut)
+-------------                       ----------                     ------------------
+check(11'b11111000010,      --op--> opcode = op  -----------------> opcode input
+      15'b0_1_1_1_1_0_0_0_0010_001,                                  |
+      "LDUR")               --e---> exp = e                          v
+                                     |                        Reg2Loc, ALUSrc, ... ALUOp, SignOp
+                                     |                               |
+                                     |      got = {all 15 output bits} (packed wire, line 10)
+                                     |                               |
+                                     +----> if (got !== exp) <-------+
+                                                |        |
+                                      tests + 1 |        | mismatch: errors + 1, print ERROR
+                                                v        v
+                                         final PASS/FAIL line (uses tests and errors)
+```
+
+| Signal | Declared | Comes from (driven by) | Goes to (read by) |
+|---|---|---|---|
+| `opcode` | line 3, `reg [10:0]` | set inside `check` (`opcode = op`) | the control unit's `opcode` input (`dut`, line 16) |
+| `op` | `check` input | the 1st argument of each `check(...)` call: a fixed opcode (lines 55–60), a loop-built opcode like `{8'b10110100, i[2:0]}` (63–71), or the random `r` (77) | `opcode` |
+| `Reg2Loc` … `Uncondbranch`, `ALUOp`, `SignOp` | lines 4–6, `wire` | the control unit's outputs (`dut`) | packed into `got`; also recorded in the VCD |
+| **`got`** | line 10, `wire [14:0]` | **built automatically** from the 10 control-unit outputs: `{Reg2Loc, ALUSrc, MemtoReg, RegWrite, MemRead, MemWrite, Branch, Uncondbranch, ALUOp, SignOp}`. It's a wire, so it changes whenever an output changes | the comparison `got !== exp` in `check`; the ERROR message; the VCD |
+| `e` | `check` input | the 2nd argument of each `check(...)` call: the expected 15-bit word, typed from the Section 5 table | `exp` |
+| **`exp`** | line 12, `reg [14:0]` | set inside `check` (`exp = e`): **the answer I expect**, from the control-signal table | the comparison `got !== exp`; the ERROR message; the VCD (so `got` and `exp` sit side by side in the waveform) |
+| `name` | `check` input | the 3rd argument: a label like `"LDUR"` | only the ERROR message |
+| `i` | line 13, `integer` | the `for` loops (lines 62–71) | the don't-care bits of `op`: `i[0]`, `i[2:0]`, `i[4:0]`, `i[1:0]` |
+| `r` | line 14, `reg [10:0]` | `$random` (cut to 11 bits) | `supported(r)`, and if it is not a real instruction, `check(r, 0, "INVALID")` |
+| `n` | line 13 | counts accepted invalid opcodes | the `while (n < 10)` loop condition |
+| `supported()` | lines 36–45 | its input is `r` | returns 1 for a real instruction; the `if (!supported(r))` decides whether `r` is used |
+| `tests` | line 13 | starts at 0 (line 50); `+1` in every `check` | the final PASS/FAIL line |
+| `errors` | line 13 | starts at 0; `+1` in `check` on a mismatch | the final line: 0 → PASS, otherwise FAIL |
+
+### 11.2 Processor (`SingleCycleProc.v`)
+
+| Signal | Comes from | Goes to |
+|---|---|---|
+| `currentpc` | the PC register (lines 49–55): `startpc` during reset, otherwise `nextpc`, on each rising clock edge | instruction memory's `Address`; `NextPClogic`'s `CurrentPC`; out to the testbench |
+| `instruction` | instruction memory's `Data` | split into `opcode`, `rm`, `rd`, `rn` (lines 58–61); bits `[25:0]` to the sign extender |
+| `opcode` | `instruction[31:21]` (line 61) | the control unit |
+| `rm` (really Rn) | `instruction[9:5]` (line 59) | register file `RA` (read port 1) |
+| `rn` | the **Reg2Loc mux** (line 60): `instruction[4:0]` if Reg2Loc = 1, else `instruction[20:16]` | register file `RB` (read port 2) |
+| `rd` | `instruction[4:0]` (line 58) | register file `RW` (which register to write) |
+| `Reg2Loc` | control unit | the Reg2Loc mux (line 60) |
+| `ALUSrc` | control unit | the ALUSrc mux (line 99) |
+| `MemtoReg` | control unit | the MemtoReg mux (line 118) |
+| `RegWrite` | control unit | register file `RegWr` |
+| `MemRead`, `MemWrite` | control unit | data memory `MemoryRead`, `MemoryWrite` |
+| `Branch`, `Uncondbranch` | control unit | `NextPClogic` |
+| `ALUOp` | control unit | ALU `ALUCtrl` |
+| `SignOp` | control unit | sign extender |
+| `regoutA` | register file `BusA` (value of register `rm`) | ALU input A |
+| `regoutB` | register file `BusB` (value of register `rn`) | the ALUSrc mux (0 input); data memory `WriteData` (what STUR stores) |
+| `extimm` | sign extender output | the ALUSrc mux (1 input); `NextPClogic` (branch offset) |
+| `aluinB` | the **ALUSrc mux** (line 99): `extimm` if ALUSrc = 1, else `regoutB` | ALU input B |
+| `aluout` | ALU `BusW` | data memory `Address`; the MemtoReg mux (0 input) |
+| `zero` | ALU `Zero` = (`aluout` == 0) | `NextPClogic` `ALUZero` (CBZ) |
+| `memout` | data memory `ReadData` | the MemtoReg mux (1 input) |
+| `MemtoRegOut` | the **MemtoReg mux** (line 118): `memout` if MemtoReg = 1, else `aluout` | register file `BusW` (the value written back); out to the testbench, which checks it |
+| `nextpc` | `NextPClogic`: PC + 4, or PC + `extimm` if (Branch AND zero) OR Uncondbranch | the PC register (next clock edge) |
+
+### 11.3 Processor testbench (`SingleCycleProcTest.v`)
+
+| Signal | Comes from | Goes to |
+|---|---|---|
+| `CLK` | the clock `always` block: flips every 60 ns (120 ns period) | the processor's `CLK`; the `@(posedge CLK)` / `@(negedge CLK)` waits |
+| `Reset` | the `initial` block: 1 to load a start address, then 0 | the processor's `reset` |
+| `startPC` | the `initial` block: `0` for Program 1, `0x34` for Program 2 | the processor's `startpc` (loaded into the PC during reset) |
+| `currentPC` | the processor's `currentpc` output | the `while (currentPC < ...)` loops (when to stop); the `CurrentPC:` printout |
+| `MemtoRegOut` | the processor's `MemtoRegOut` output (the value being written back this cycle) | `passTest`: compared with `0xF` (Program 1) and `0x123456789abcdef0` (Program 2) |
+| `passed` | starts at 0; `+1` inside `passTest` on a match | `allPassed(passed, 2)` → "All tests passed" |
+| `watchdog` | `+1` every clock cycle | stops the simulation at 255 cycles (infinite-loop guard) |

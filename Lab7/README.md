@@ -299,3 +299,115 @@ design it is **3 bits** (line 31), because MOVZ needed a 5th immediate format
 - **MOVZ:** SignOp = `100` builds the shifted immediate, ALUSrc = 1 sends it to
   the ALU, PassB passes it through, MemtoReg = 0, and RegWrite = 1 writes it
   into Rd.
+
+## 9. CBZ in detail
+
+`CBZ Rt, label` means: **if register Rt is 0, jump to `label`; otherwise go on
+to the next instruction.** In Program 1 it is the loop's exit test:
+
+```
+0x1c  loop: CBZ  X12, end        // B400008C   if X12 == 0, jump to 0x2c
+0x20        ADD  X13, X13, X9    // counter++
+0x24        SUB  X12, X12, X9    // X12--
+0x28        B    loop            // back to 0x1c
+0x2c  end:  STUR X13, [XZR, #0x20]
+```
+
+### 9.1 The encoding: `0xB400008C` (CB format, green sheet)
+
+```
+ opcode (8)   offset imm19 (19 bits)        Rt (5)
+ 10110100     0000000000000000100           01100
+ [31:24]      [23:5]                        [4:0]
+```
+
+| Field | Bits | Value | Meaning |
+|---|---|---|---|
+| opcode | [31:24] | `10110100` | CBZ |
+| imm19 | [23:5] | `4` | jump 4 **instructions** forward: `0x1c → 0x2c` is 16 bytes = 4 × 4 bytes |
+| Rt | [4:0] | `01100` = 12 | the register to test, X12 |
+
+The control unit sees 11 bits, `[31:21]` = `10110100` + the top 3 bits of
+imm19. That is why the pattern is `10110100???`: the last 3 bits belong to the
+offset, not the opcode, so they must be ignored. The control testbench tries
+all 8 values of them.
+
+### 9.2 What the control unit sets (`SingleCycleControl.v`)
+
+| Signal | Value | Why |
+|---|---|---|
+| **Reg2Loc** | **1** | the register to test is Rt, in bits `[4:0]`. Reg2Loc = 1 sends those bits to Read register 2 (R-type instructions use `[20:16]` there instead) |
+| ALUSrc | 0 | ALU input B must be the register value, not the immediate |
+| **ALUOp** | **`0111` (PassB)** | the ALU outputs input B (Rt's value) unchanged, so its **Zero** output = 1 exactly when Rt = 0 |
+| **Branch** | **1** | "branch if Zero = 1" (conditional) |
+| Uncondbranch | 0 | not an always-branch |
+| RegWrite | 0 | CBZ changes no register |
+| MemRead / MemWrite | 0 / 0 | CBZ doesn't use memory |
+| MemtoReg | 0 | don't care (nothing is written) |
+| **SignOp** | **`010` (CB-type)** | tells the sign extender to build the branch offset from `[23:5]` |
+
+### 9.3 The path through the datapath (Section 8 diagram)
+
+1. **Fetch:** PC = `0x1c`, and instruction memory outputs `B400008C`.
+2. **Decode:** `opcode` = `10110100000` matches `10110100???`, so Control sets the signals above.
+3. **Read register 2:** Reg2Loc = 1, so `rn = instruction[4:0]` = 12
+   (`SingleCycleProc.v` line 60). The register file outputs X12's value on
+   `regoutB`.
+4. **ALU:** ALUSrc = 0, so input B = `regoutB` (line 99). ALUOp = PassB, so
+   `aluout = regoutB` and **`zero = (aluout == 0)`** (`../Lab6/ALU.v`).
+   Input A is ignored.
+5. **Offset:** SignOp = `010`, so the sign extender builds
+   `{ {43{instr[23]}}, instr[23:5], 2'b00 }` = sign-extend(4) × 4 = **`0x10`** (16 bytes).
+6. **Next PC** (`../Lab6/NextPClogic.v`): `Branch && ALUZero` is the AND gate.
+   - If X12 ≠ 0: Zero = 0, so the AND gate outputs 0 and **NextPC = PC + 4 = `0x20`** (stay in the loop).
+   - If X12 = 0: Zero = 1, so the AND gate outputs 1 and **NextPC = PC + `0x10` = `0x2c`** (exit the loop).
+7. **No write-back, no memory:** RegWrite = 0 and MemWrite = 0, so nothing changes except the PC.
+
+### 9.4 What the waveform shows (`waves/singlecycle.vcd`)
+
+CBZ at `0x1c` runs **16 times**. X12 starts at `0xf` (15) and the loop
+subtracts 1 each pass. Values read from the waveform at each visit:
+
+| Visit | Time (ns) | `regoutB` (X12) | `aluout` | `zero` | `extimm` | `nextpc` | Result |
+|---|---|---|---|---|---|---|---|
+| 1 | 1,140 | `f` | `f` | 0 | `10` | `20` | not taken |
+| 2 | 1,620 | `e` | `e` | 0 | `10` | `20` | not taken |
+| 3–14 | … | `d` … `2` | same | 0 | `10` | `20` | not taken |
+| 15 | 7,860 | `1` | `1` | 0 | `10` | `20` | not taken |
+| **16** | **8,340** | **`0`** | **`0`** | **1** | `10` | **`2c`** | **taken: exit the loop** |
+
+On every visit: Reg2Loc = 1, `rn` = `0xc` (12), ALUOp = `0x7`, SignOp = `010`,
+Branch = 1. Each visit is 480 ns apart, which is 4 instructions × the 120 ns
+clock (CBZ, ADD, SUB, B).
+
+To see this in Surfer, run `./run_waves.sh proc`, zoom to 1,000–8,500 ns and
+watch `currentPC`, `regoutB`, `zero` and `nextpc`. `nextpc` is `20` until the
+last visit, when `zero` goes to 1 and `nextpc` jumps to `2c`.
+
+### 9.5 CBZ compared with the other branch, `B`
+
+| | CBZ (conditional) | B (unconditional) |
+|---|---|---|
+| Format / SignOp | CB, `010`: offset `[23:5]`, 19 bits | B, `011`: offset `[25:0]`, 26 bits |
+| Control | Branch = 1, Reg2Loc = 1, ALUOp = PassB | Uncondbranch = 1 only |
+| Uses the ALU? | yes, to test Rt with the Zero flag | no (ALUOp is don't care) |
+| Taken when | Rt = 0 (the AND gate) | always (the OR gate) |
+| In Program 1 | `0x1c`: offset +4 → `0x2c` | `0x28`: offset −3 → `0x1c` (`0x17FFFFFD`) |
+
+The offsets are **sign-extended** because branches can go backwards: `B loop`
+has offset −3, which the sign extender turns into −12 bytes, so
+`0x28 − 12 = 0x1c`.
+
+### 9.6 Possible TA questions
+
+- **Why PassB and not SUB?** CBZ only asks "is Rt zero?". Passing Rt through
+  sets Zero exactly when Rt = 0. (The textbook's control table also uses
+  "pass input b" for CBZ.)
+- **Why Reg2Loc = 1?** In the CB format the register is in `[4:0]`, not
+  `[20:16]`, so the mux has to pick `[4:0]` for Read register 2.
+- **Why is the offset × 4?** imm19 counts instructions, and each instruction
+  is 4 bytes. The sign extender appends `2'b00`, which multiplies by 4.
+- **Why doesn't CBZ write a register?** It only decides the next PC, so
+  RegWrite = 0.
+- **How does the processor tell CBZ from B?** By the opcode: `10110100` vs
+  `000101`. The control unit then sets Branch for CBZ or Uncondbranch for B.

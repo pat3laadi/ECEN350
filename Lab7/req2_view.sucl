@@ -1,0 +1,26 @@
+divider_add Requirement_2
+variable_add SC_Control_tb.opcode
+item_set_format Binary
+variable_add SC_Control_tb.Reg2Loc
+variable_add SC_Control_tb.ALUSrc
+variable_add SC_Control_tb.MemtoReg
+variable_add SC_Control_tb.RegWrite
+variable_add SC_Control_tb.MemRead
+variable_add SC_Control_tb.MemWrite
+variable_add SC_Control_tb.Branch
+variable_add SC_Control_tb.Uncondbranch
+variable_add SC_Control_tb.ALUOp
+variable_add SC_Control_tb.SignOp
+variable_add SC_Control_tb.got
+item_set_format Binary
+variable_add SC_Control_tb.exp
+item_set_format Binary
+variable_add SC_Control_tb.errors
+variable_add SC_Control_tb.tests
+zoom_fit
+marker_set ADDI_SUBI 30000
+marker_set CBZ 50000
+marker_set B 90000
+marker_set MOVZ 250000
+marker_set INVALID 270000
+cursor_set 50000

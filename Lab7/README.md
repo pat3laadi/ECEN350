@@ -592,3 +592,46 @@ module SC_Control_tb;                       // testbench: no ports, it's the top
     end
 endmodule
 ```
+
+### 10.7 How the testbench meets each prelab requirement
+
+| Prelab requirement | Where in `SC_Control_tb.v` |
+|---|---|
+| Self-checking, prints an error for each failed test | `check` task: `if (got !== exp)` prints `ERROR <name> opcode=... got=... expected=...` and counts it; PASS/FAIL summary at the end |
+| Every supported opcode with **all** values of its don't-care bits | fixed opcodes once each (LDUR, STUR, ADD, SUB, AND, ORR); `for` loops over 2 values for ADDI/SUBI, 8 for CBZ, 32 for B, 4 for MOVZ |
+| 10 random opcodes that match no supported opcode, checked for the default behavior | `while (n < 10)`: `r = $random`, kept only if `!supported(r)`, expected output all 0 |
+| VCD dumpfile | `$dumpfile("SC_Control_tb.vcd"); $dumpvars(0, SC_Control_tb);` |
+
+The 10 random invalid opcodes it generates (all different, none a real instruction):
+`00110001101, 01000010010, 01100000001, 01100001101, 10001100101,
+10100001101, 10100100100, 11000001001, 11001100011, 11010000001`.
+
+### 10.8 Checking the testbench itself for bugs
+
+The prelab allows an LLM but requires making sure the testbench has no bugs.
+A testbench that always prints PASS is useless, so I checked two things.
+
+**1. Review of the details that commonly go wrong:**
+
+- The `supported()` masks match the control unit's patterns exactly (ADDI `op[10:1]`, CBZ `op[10:3]`, B `op[10:5]`, MOVZ `op[10:2]`). If one were wrong, a real instruction could be picked as "invalid" and expected to output 0.
+- `!==` instead of `!=`, so X/Z outputs fail instead of slipping through.
+- `r = $random` is 32 bits and is cut down to 11 bits by the `reg [10:0]`, which is intended.
+- The test-name string is 8 characters wide, so "INVALID" (7) fits.
+- The 5 ns wait after each opcode lets the combinational outputs settle before checking.
+
+**2. Mutation testing:** I broke the control unit on purpose, one bug at a
+time, and reran the testbench. A good testbench must FAIL every time:
+
+| Bug put into `SingleCycleControl.v` | Testbench result |
+|---|---|
+| CBZ pattern too strict (`1011010000?`, a don't-care bit fixed) | **FAIL**, 6 errors (those CBZ variants fall to default) |
+| B pattern too strict (`0001010????`) | **FAIL**, 16 errors |
+| CBZ uses ALUOp SUB instead of PassB | **FAIL**, 8 errors |
+| unknown opcodes set RegWrite = 1 | **FAIL**, 10 errors (all 10 invalid tests) |
+| MemtoReg's default removed (creates a latch) | **FAIL**: the leftover 1 from LDUR shows up on STUR, ADD, SUB, AND, … |
+| STUR's Reg2Loc = 0 | **FAIL**, 1 error |
+| no bug (the real design) | **PASS**, 64 tests, 0 errors |
+
+Every injected bug was caught, and the don't-care loops are what caught the
+pattern bugs: a test with only one encoding per instruction would have missed
+them.

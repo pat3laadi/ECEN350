@@ -411,3 +411,184 @@ has offset −3, which the sign extender turns into −12 bytes, so
   RegWrite = 0.
 - **How does the processor tell CBZ from B?** By the opcode: `10110100` vs
   `000101`. The control unit then sets Branch for CBZ or Uncondbranch for B.
+
+## 10. Prelab: the control unit testbench (`SC_Control_tb.v`)
+
+The prelab asks for a testbench for the control unit; Lab 7 Question 1 then
+runs it and shows it in GTKWave. Result:
+
+```
+VCD info: dumpfile SC_Control_tb.vcd opened for output.
+PASS: SC_Control, 64 tests, 0 errors
+SC_Control_tb.v:84: $finish called at 320000 (1ps)
+```
+
+### 10.1 What a control-unit testbench has to prove
+
+1. **Every instruction gives the right control signals.** All 10 outputs, for
+   all 11 instructions (Section 5 table).
+2. **The don't-care opcode bits really are ignored.** ADDI/SUBI, CBZ, B and
+   MOVZ only fix part of the 11-bit opcode (Section 2). One encoding per
+   instruction would not prove the `casez` pattern is right.
+3. **Unknown opcodes do nothing.** Every signal must be 0, so a bad
+   instruction can't write a register, write memory or branch.
+4. **No output is ever X or Z** (unassigned on some path).
+
+### 10.2 How it is built
+
+| Part | What it does |
+|---|---|
+| `reg [10:0] opcode` | the input I drive into the control unit |
+| `wire ... Reg2Loc, ALUSrc, ...`, `ALUOp`, `SignOp` | the outputs I watch |
+| `wire [14:0] got = {...}` | all 15 output bits packed into **one word**, so one comparison checks every signal at once |
+| `reg [14:0] exp` | the expected 15-bit word. It's a `reg`, so it also shows in the waveform next to `got` |
+| `SC_Control dut(...)` | the control unit being tested ("device under test") |
+| `task check(op, e, name)` | applies one opcode, waits `#5` ns for the outputs to settle, compares `got !== exp`, counts the test, and prints an ERROR line on a mismatch |
+| `function supported(op)` | returns 1 if an opcode is a real instruction. Used to pick random **invalid** opcodes |
+| the `initial` block | opens the VCD file, runs every test, prints PASS/FAIL, `$finish` |
+
+**Why `!==` and not `!=`:** `!=` returns X when an output is X, and an `if`
+treats X as false, so a missing assignment would slip through. `!==`
+compares X and Z literally, so they count as errors.
+
+**Why pack the bits:** a 15-bit expected word, written as
+`R A M R M M B U ALUOp SignOp`, is one line per test and matches the Section 5
+table column for column.
+
+### 10.3 The 64 tests
+
+| Tests | Count | How |
+|---|---|---|
+| LDUR, STUR, ADD, SUB, AND, ORR | 6 | one `check` each; all 11 opcode bits are fixed |
+| ADDI, SUBI | 4 | loop over both values of the 1 don't-care bit |
+| CBZ | 8 | loop over all 8 values of its 3 don't-care bits |
+| B | 32 | loop over all 32 values of its 5 don't-care bits |
+| MOVZ | 4 | loop over all 4 `hw` values |
+| invalid opcodes | 10 | `$random` opcodes that `supported()` says are not instructions; expected output is all 0 |
+| **Total** | **64** | |
+
+The expected words, from the Section 5 table:
+
+| Instruction | `exp` = R2L ALUSrc M2R RegW MemR MemW Br Unc \| ALUOp \| SignOp |
+|---|---|
+| LDUR | `0_1_1_1_1_0_0_0_0010_001` |
+| STUR | `1_1_0_0_0_1_0_0_0010_001` |
+| ADD | `0_0_0_1_0_0_0_0_0010_000` |
+| SUB | `0_0_0_1_0_0_0_0_0110_000` |
+| AND | `0_0_0_1_0_0_0_0_0000_000` |
+| ORR | `0_0_0_1_0_0_0_0_0001_000` |
+| ADDI | `0_1_0_1_0_0_0_0_0010_000` |
+| SUBI | `0_1_0_1_0_0_0_0_0110_000` |
+| CBZ | `1_0_0_0_0_0_1_0_0111_010` |
+| B | `0_0_0_0_0_0_0_1_0000_011` |
+| MOVZ | `0_1_0_1_0_0_0_0_0111_100` |
+| invalid | `0_0_0_0_0_0_0_0_0000_000` |
+
+### 10.4 What to show in the waveform
+
+Run `./run_waves.sh ctrl`. Each test lasts 5 ns:
+
+- **0–30 ns:** LDUR, STUR, ADD, SUB, AND, ORR. Each changes a different set of control bits.
+- **30–50 ns:** ADDI/SUBI. The last opcode bit flips, and the outputs stay the same.
+- **50–90 ns:** CBZ ×8. The low 3 opcode bits count, and the outputs stay the same.
+- **90–250 ns:** B ×32.
+- **250–270 ns:** MOVZ ×4.
+- **270–320 ns:** 10 invalid opcodes. Every control bit is 0.
+- **The whole time:** `got` = `exp`, `errors` stays 0, and `tests` counts up to 64.
+
+### 10.5 Limits of this testbench (the "challenges" question)
+
+- **Don't-care outputs:** they are expected to be 0. That is stricter than the hardware needs.
+- **The expected values are my own reading of the textbook:** a misunderstanding would be in both the design and the test. The processor test (Programs 1 and 2) catches that, because real programs must give the right answers.
+- **Invalid opcodes are sampled, not exhaustive:** 10 of about 2,000. `$random` gives the same sequence every run, so the result is repeatable.
+
+### 10.6 The full testbench (commented)
+
+```verilog
+`timescale 1ns/1ps                          // #5 means 5 ns
+module SC_Control_tb;                       // testbench: no ports, it's the top of the simulation
+    reg  [10:0] opcode;                     // input I drive into the control unit
+    wire        Reg2Loc, ALUSrc, MemtoReg, RegWrite, MemRead, MemWrite, Branch, Uncondbranch;  // 1-bit outputs
+    wire [3:0]  ALUOp;                      // ALU operation output
+    wire [2:0]  SignOp;                     // sign extender format output (3 bits, includes MOVZ)
+
+    // Pack every output into one 15-bit value so one comparison checks all of them at once.
+    // Order: {Reg2Loc, ALUSrc, MemtoReg, RegWrite, MemRead, MemWrite, Branch, Uncondbranch, ALUOp, SignOp}
+    wire [14:0] got = {Reg2Loc, ALUSrc, MemtoReg, RegWrite, MemRead, MemWrite,
+                       Branch, Uncondbranch, ALUOp, SignOp};
+    reg  [14:0] exp;                        // the expected 15-bit control word
+    integer i, n, errors, tests;            // loop counters, error count, test count
+    reg  [10:0] r;                          // holds each random opcode
+
+    SC_Control dut(.Reg2Loc(Reg2Loc), .ALUSrc(ALUSrc), .MemtoReg(MemtoReg), .RegWrite(RegWrite),  // device under test:
+                   .MemRead(MemRead), .MemWrite(MemWrite), .Branch(Branch),                       // connect every port
+                   .Uncondbranch(Uncondbranch), .ALUOp(ALUOp), .SignOp(SignOp), .opcode(opcode)); // to my signals
+
+    // check: apply one opcode, wait, and compare all control bits to the expected value
+    task check(input [10:0] op, input [14:0] e, input [8*8-1:0] name);   // name = label printed on errors
+        begin
+            opcode = op;                    // drive the opcode into the control unit
+            exp = e;                        // save the expected answer (shows up in the waveform)
+            #5;                             // wait 5 ns for the combinational outputs to settle
+            tests = tests + 1;              // count this test
+            if (got !== exp) begin          // !== also catches X/Z, so unassigned outputs are caught
+                errors = errors + 1;        // count the failure
+                $display("ERROR %0s opcode=%b got=%b expected=%b", name, op, got, exp);  // say what went wrong
+            end
+        end
+    endtask
+
+    // supported: returns 1 if an opcode matches any instruction the control unit handles.
+    // Each check compares only the fixed opcode bits, ignoring the don't-care bits.
+    function supported(input [10:0] op);
+        supported = (op == 11'b11111000010) || (op == 11'b11111000000) ||   // LDUR, STUR (all 11 bits fixed)
+                    (op == 11'b10001011000) || (op == 11'b11001011000) ||   // ADD, SUB
+                    (op == 11'b10001010000) || (op == 11'b10101010000) ||   // AND, ORR
+                    (op[10:1] == 10'b1001000100) ||                         // ADDI: top 10 bits fixed
+                    (op[10:1] == 10'b1101000100) ||                         // SUBI: top 10 bits fixed
+                    (op[10:3] == 8'b10110100)    ||                         // CBZ: top 8 bits fixed
+                    (op[10:5] == 6'b000101)      ||                         // B: top 6 bits fixed
+                    (op[10:2] == 9'b110100101);                             // MOVZ: top 9 bits fixed
+    endfunction
+
+    initial begin
+        $dumpfile("SC_Control_tb.vcd");     // name of the waveform file for GTKWave
+        $dumpvars(0, SC_Control_tb);        // record every signal in this testbench
+        errors = 0; tests = 0;              // start both counts at 0
+
+        // Expected bits:            R A M R M M B U ALUOp SignOp
+        //                           2 S 2 W R W r n
+        // (Don't cares are set to 0, matching what the design outputs.)
+        check(11'b11111000010, 15'b0_1_1_1_1_0_0_0_0010_001, "LDUR");  // load: ALUSrc, MemtoReg, RegWrite, MemRead, ADD, D-type
+        check(11'b11111000000, 15'b1_1_0_0_0_1_0_0_0010_001, "STUR");  // store: Reg2Loc, ALUSrc, MemWrite, ADD, D-type
+        check(11'b10001011000, 15'b0_0_0_1_0_0_0_0_0010_000, "ADD");   // RegWrite, ADD
+        check(11'b11001011000, 15'b0_0_0_1_0_0_0_0_0110_000, "SUB");   // RegWrite, SUB
+        check(11'b10001010000, 15'b0_0_0_1_0_0_0_0_0000_000, "AND");   // RegWrite, AND
+        check(11'b10101010000, 15'b0_0_0_1_0_0_0_0_0001_000, "ORR");   // RegWrite, OR
+
+        for (i = 0; i < 2; i = i + 1) begin                  // both values of the 1 don't-care bit
+            check({10'b1001000100, i[0]}, 15'b0_1_0_1_0_0_0_0_0010_000, "ADDI");  // ALUSrc, RegWrite, ADD, I-type
+            check({10'b1101000100, i[0]}, 15'b0_1_0_1_0_0_0_0_0110_000, "SUBI");  // ALUSrc, RegWrite, SUB, I-type
+        end
+        for (i = 0; i < 8; i = i + 1)                        // all 8 values of CBZ's 3 don't-care bits
+            check({8'b10110100, i[2:0]}, 15'b1_0_0_0_0_0_1_0_0111_010, "CBZ");    // Reg2Loc, Branch, PassB, CB-type
+        for (i = 0; i < 32; i = i + 1)                       // all 32 values of B's 5 don't-care bits
+            check({6'b000101, i[4:0]}, 15'b0_0_0_0_0_0_0_1_0000_011, "B");        // Uncondbranch, B-type
+        for (i = 0; i < 4; i = i + 1)                        // all 4 values of MOVZ's 2 hw bits
+            check({9'b110100101, i[1:0]}, 15'b0_1_0_1_0_0_0_0_0111_100, "MOVZ");  // ALUSrc, RegWrite, PassB, MOVZ-type
+
+        n = 0;                                               // count of invalid opcodes tested so far
+        while (n < 10) begin                                 // keep going until 10 are tested
+            r = $random;                                     // random number, cut down to 11 bits
+            if (!supported(r)) begin                         // only use it if it's NOT a real instruction
+                check(r, 15'b0, "INVALID");                  // undefined opcodes must output all zeros
+                n = n + 1;                                   // one more invalid opcode tested
+            end
+        end
+
+        if (errors == 0) $display("PASS: SC_Control, %0d tests, 0 errors", tests);   // everything matched
+        else             $display("FAIL: SC_Control, %0d errors in %0d tests", errors, tests);  // report failures
+        $finish;                                             // end the simulation
+    end
+endmodule
+```
